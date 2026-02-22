@@ -28,12 +28,12 @@ jobs:
       - name: Create zip
         run: |
           cd dist
-          zip -r ../${{ github.ref_name || 'release' }}.zip .
+          zip -r ../${{ github.ref_name || format('release-%s', github.run_number) }}.zip .
           cd -
       - name: Create GitHub Release
         id: create_release
         uses: ncipollo/release-action@v1
         with:
-          tag: ${{ github.ref_name || 'v' + github.run_number }}
-          name: ${{ github.ref_name || 'release-' + github.run_number }}
-          files: "./${{ github.ref_name || 'release' }}.zip"
+          tag: ${{ github.ref_name || format('v%s', github.run_number) }}
+          name: ${{ github.ref_name || format('release-%s', github.run_number) }}
+          files: "./${{ github.ref_name || format('release-%s', github.run_number) }}.zip"
