@@ -1,0 +1,13 @@
+{
+  "name": "decky-protondb-collections",
+  "title": "ProtonDB Collections",
+  "version": "0.1.0",
+  "author": "",
+  "description": "Creates Steam collections from ProtonDB badge tiers and optionally syncs with Tab Master.",
+  "license": "MIT",
+  "private": true,
+  "main": "dist/index.js",
+  "source": "src/index.tsx",
+  "backend": "dist/backendEntry.js",
+  "assets": ["assets/icon.png"]
+}

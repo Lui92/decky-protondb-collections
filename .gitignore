@@ -1,0 +1,8 @@
+node_modules/
+dist/
+/*.zip
+proton_cache.json
+settings.json
+/.idea
+.vscode
+*.log

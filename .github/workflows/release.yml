@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install deps
+        run: npm ci --legacy-peer-deps
+      - name: Build
+        run: npm run build
+      - name: Prepare dist
+        run: |
+          mkdir -p dist
+          cp plugin.json dist/
+          cp -r assets dist/
+          cp -r dist ./pack
+      - name: Create zip
+        run: |
+          cd dist
+          zip -r ../${{ github.ref_name || 'release' }}.zip .
+          cd -
+      - name: Create GitHub Release
+        id: create_release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ github.ref_name || 'v' + github.run_number }}
+          name: ${{ github.ref_name || 'release-' + github.run_number }}
+          files: "./${{ github.ref_name || 'release' }}.zip"
