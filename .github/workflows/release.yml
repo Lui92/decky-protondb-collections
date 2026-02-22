@@ -27,13 +27,30 @@ jobs:
           cp -r dist ./pack
       - name: Create zip
         run: |
+          sudo apt-get update && sudo apt-get install -y zip
           cd dist
-          zip -r ../${{ github.ref_name || format('release-%s', github.run_number) }}.zip .
+          zip -r ../${{ env.RELEASE_NAME }}.zip .
           cd -
+        env:
+          RELEASE_NAME: ${{ env.RELEASE_NAME }}
+      - name: Compute release name and tag
+        run: |
+          if [ -n "${GITHUB_REF_NAME}" ]; then
+            NAME="${GITHUB_REF_NAME}"
+            TAG="${GITHUB_REF_NAME}"
+          else
+            NAME="release-${GITHUB_RUN_NUMBER}"
+            TAG="v${GITHUB_RUN_NUMBER}"
+          fi
+          echo "RELEASE_NAME=$NAME" >> $GITHUB_ENV
+          echo "RELEASE_TAG=$TAG" >> $GITHUB_ENV
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
       - name: Create GitHub Release
         id: create_release
         uses: ncipollo/release-action@v1
         with:
-          tag: ${{ github.ref_name || format('v%s', github.run_number) }}
-          name: ${{ github.ref_name || format('release-%s', github.run_number) }}
-          files: "./${{ github.ref_name || format('release-%s', github.run_number) }}.zip"
+          tag: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_NAME }}
+          files: "./${{ env.RELEASE_NAME }}.zip"
