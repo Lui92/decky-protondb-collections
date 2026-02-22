@@ -106,9 +106,5 @@ Demo
 
 Badges
 
-- CI: ![CI](https://github.com/<your-org>/<your-repo>/actions/workflows/ci.yml/badge.svg)
-- Release: ![Release](https://github.com/<your-org>/<your-repo>/actions/workflows/release.yml/badge.svg)
-
-Replace `<your-org>` and `<your-repo>` with your repository details to show live badges.
-
-If your environment doesn't have `npm` available (like this editor environment), run the above command on your development machine.
+- CI: ![CI](https://github.com/Lui92/decky-protondb-collections/actions/workflows/ci.yml/badge.svg)
+- Release: ![Release](https://github.com/Lui92/decky-protondb-collections/actions/workflows/release.yml/badge.svg)
