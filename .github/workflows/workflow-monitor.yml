@@ -1,0 +1,69 @@
+name: Monitor Release Failures
+
+on:
+  workflow_run:
+    workflows: [ "Release" ]
+    types:
+      - completed
+
+jobs:
+  handle-failure:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report run info
+        uses: actions/github-script@v7
+        id: report
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const run = context.payload.workflow_run;
+            const body = `Release workflow run [#${run.run_number}](${run.html_url}) failed.
+
+Repository: ${context.repo.owner}/${context.repo.repo}
+Run ID: ${run.id}
+Conclusion: ${run.conclusion}
+Head branch: ${run.head_branch}
+Head SHA: ${run.head_sha}`;
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `CI: Release workflow failed (run #${run.run_number})`,
+              body,
+            });
+            core.setOutput('issue_number', issue.data.number);
+
+      - name: Attempt automatic retry
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const runId = context.payload.workflow_run.id;
+            try {
+              await github.rest.actions.reRunWorkflow({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: runId,
+              });
+              core.info(`Triggered re-run of workflow run ${runId}`);
+            } catch (err) {
+              core.info(`Re-run request failed: ${err.message}`);
+            }
+
+      - name: Comment on issue with retry note
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issue_number = parseInt(core.getInput('issue_number') || '${{ steps.report.outputs.issue_number }}');
+            const run = context.payload.workflow_run;
+            const body = `This issue was created automatically after the Release workflow run [#${run.run_number}](${run.html_url}) failed. An automatic retry was attempted.
+
+Please check the Actions page for logs and rerun manually if needed.`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+              body,
+            });
