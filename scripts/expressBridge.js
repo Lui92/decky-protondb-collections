@@ -38,6 +38,7 @@ async function start() {
   }
 
   // Serve demo and static files
+  app.use(express.static(path.resolve(__dirname, '..', 'demo')));
   app.use('/demo', express.static(path.resolve(__dirname, '..', 'demo')));
   app.use('/dist', express.static(path.resolve(__dirname, '..', 'dist')));
 

@@ -29,14 +29,11 @@ async function build() {
     external: ['@decky/ui', 'react', 'react-dom'],
   });
 
-  // copy plugin.json and assets
+  // copy assets into dist/ (do not duplicate plugin.json here)
   try {
-    fs.copyFileSync('plugin.json', path.join(outdir, 'plugin.json'));
     const assetsSrc = path.resolve('assets');
     const assetsDst = path.join(outdir, 'assets');
-    if (fs.existsSync(assetsDst)) {
-      // noop
-    } else if (fs.existsSync(assetsSrc)) {
+    if (!fs.existsSync(assetsDst) && fs.existsSync(assetsSrc)) {
       fs.mkdirSync(assetsDst, { recursive: true });
       const files = fs.readdirSync(assetsSrc);
       for (const f of files) fs.copyFileSync(path.join(assetsSrc, f), path.join(assetsDst, f));
