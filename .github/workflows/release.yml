@@ -86,7 +86,7 @@ jobs:
                 draft: false,
                 prerelease,
               });
-              return data.upload_url;
+              return data.id;
             } catch (err) {
               if (err.status === 404) {
                 const { data } = await github.rest.repos.createRelease({
@@ -98,7 +98,7 @@ jobs:
                   draft: false,
                   prerelease,
                 });
-                return data.upload_url;
+                return data.id;
               }
               throw err;
             }
@@ -106,10 +106,31 @@ jobs:
           RELEASE_TAG: ${{ env.RELEASE_TAG }}
           PRERELEASE: ${{ env.PRERELEASE }}
 
-      - name: Upload release asset
-        uses: actions/upload-release-asset@v1
+      - name: Upload release asset via API
+        uses: actions/github-script@v6
         with:
-          upload_url: ${{ steps.create_release.outputs.result }}
-          asset_path: ./${{ env.RELEASE_NAME }}.zip
-          asset_name: ${{ env.RELEASE_NAME }}.zip
-          asset_content_type: application/zip
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const releaseId = parseInt('${{ steps.create_release.outputs.result }}', 10);
+            const assetPath = path.resolve(process.cwd(), `${process.env.RELEASE_NAME}.zip`);
+            if (!fs.existsSync(assetPath)) {
+              throw new Error(`Asset not found: ${assetPath}`);
+            }
+            const data = fs.readFileSync(assetPath);
+            const name = `${process.env.RELEASE_NAME}.zip`;
+            const contentType = 'application/zip';
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: releaseId,
+              name,
+              data,
+              headers: {
+                'content-type': contentType,
+                'content-length': data.length,
+              },
+            });
+            return name;
+        env:
+          RELEASE_NAME: ${{ env.RELEASE_NAME }}
