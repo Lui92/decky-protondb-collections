@@ -7,7 +7,6 @@ const CACHE_FILE = path.join(process.cwd(), "proton_cache.json");
 const SETTINGS_FILE = path.join(process.cwd(), "settings.json");
 
 jest.mock("node-fetch");
-const { Response } = jest.requireActual("node-fetch");
 
 describe("Plugin backend", () => {
   let plugin: Plugin;
@@ -20,17 +19,59 @@ describe("Plugin backend", () => {
     // small request limits for tests to run fast
     (plugin as any).maxConcurrentRequests = 2;
     (plugin as any).minIntervalMs = 0;
+    
+    // Clear and configure mock responses
+    const mockFetch = fetch as any as jest.Mock;
+    mockFetch.mockClear();
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes("/1.json")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ tier: "Platinum" })
+        });
+      }
+      if (url.includes("/2.json")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ tier: "Silver" })
+        });
+      }
+      if (url.includes("/3.json")) {
+        return Promise.resolve({
+          ok: false,
+          status: 404,
+          json: async () => ({ tier: "Unknown" })
+        });
+      }
+      // Default mock for test case 1 (fetchBadge with app 12345)
+      if (url.includes("/12345.json")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ tier: "Gold" })
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ tier: "Unknown" })
+      });
+    });
   });
 
   test("fetchBadge caches results", async () => {
-    (fetch as unknown as jest.Mock).mockResolvedValueOnce(new Response(JSON.stringify({ tier: "Gold" }), { status: 200 }));
     const tier1 = await (plugin as any).fetchBadge(12345);
     expect(tier1).toBe("gold");
 
-    // Subsequent call should not call fetch again (mock would throw if called)
-    (fetch as unknown as jest.Mock).mockImplementation(() => { throw new Error("should not be called"); });
+    // Subsequent call should use cache (no additional fetch calls)
+    const mockFetch = fetch as any as jest.Mock;
+    const callCountAfterFirst = mockFetch.mock.calls.length;
     const tier2 = await (plugin as any).fetchBadge(12345);
     expect(tier2).toBe("gold");
+    // Verify no additional fetch was made (cache was used)
+    expect(mockFetch.mock.calls.length).toBe(callCountAfterFirst);
   });
 
   test("generateCollections groups by tier and respects installedOnly", async () => {
@@ -43,19 +84,14 @@ describe("Plugin backend", () => {
       isPluginInstalled: () => false,
     };
 
-    // Mock fetch responses: app 1 -> platinum, 2 -> silver, 3 -> unknown
-    (fetch as unknown as jest.Mock).mockImplementation((url: string) => {
-      if (url.includes("/1.json")) return Promise.resolve(new Response(JSON.stringify({ tier: "Platinum" }), { status: 200 }));
-      if (url.includes("/2.json")) return Promise.resolve(new Response(JSON.stringify({ tier: "Silver" }), { status: 200 }));
-      if (url.includes("/3.json")) return Promise.reject(new Error("network"));
-      return Promise.resolve(new Response(JSON.stringify({ tier: "Unknown" }), { status: 200 }));
-    });
-
     const buckets = await (plugin as any).generateCollections(undefined, 2);
     expect(buckets).toBeDefined();
-    // Since installedOnly defaults to false, all apps should appear
+    // Since installedOnly defaults to false, apps should be grouped by tier
+    // App 1 should be in platinum bucket
     expect((buckets as any)["platinum"]).toContain(1);
+    // App 2 should be in silver bucket
     expect((buckets as any)["silver"]).toContain(2);
+    // App 3 with 404 response should map to unknown
     expect((buckets as any)["unknown"]).toContain(3);
   });
 });

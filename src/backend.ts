@@ -13,14 +13,23 @@
 import fs from "fs";
 import path from "path";
 // Use native fetch when available (Node 18+), otherwise fall back to node-fetch.
-let fetchLib: any;
-try {
-  fetchLib = (globalThis as any).fetch || require('node-fetch');
-} catch (e) {
-  // If require fails, try to use global fetch; otherwise fetch will be undefined and
-  // httpGetJson will throw on use.
-  fetchLib = (globalThis as any).fetch;
+let fetchLib: any = null;
+let fetchLibInitialized = false;
+
+function getFetchLib() {
+  if (!fetchLibInitialized) {
+    try {
+      fetchLib = (globalThis as any).fetch || require('node-fetch');
+    } catch (e) {
+      // If require fails, try to use global fetch; otherwise fetch will be undefined and
+      // httpGetJson will throw on use.
+      fetchLib = (globalThis as any).fetch;
+    }
+    fetchLibInitialized = true;
+  }
+  return fetchLib;
 }
+
 import EventEmitter from "eventemitter3";
 import { Cache, CacheEntry, Settings, Buckets } from "./types";
 
@@ -77,7 +86,8 @@ export default class Plugin extends EventEmitter {
     try {
       for (let i = 0; i <= retries; i++) {
         try {
-          const res = await fetchLib(url, { timeout: 10000 } as any);
+          const fetch = getFetchLib();
+          const res = await fetch(url, { timeout: 10000 } as any);
           if (!res || !res.ok) {
             const status = res && res.status ? res.status : 'NO_RESPONSE';
             const statusText = res && res.statusText ? res.statusText : '';
