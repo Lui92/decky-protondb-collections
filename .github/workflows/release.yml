@@ -23,46 +23,55 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '18'
+
+      - name: Read plugin name from package.json
+        id: plugin_name
+        run: |
+          echo "PLUGIN_NAME=$(node -p 'require(`./package.json`).name')" >> $GITHUB_ENV
       - name: Install deps
         run: npm ci --legacy-peer-deps
       - name: Build
         run: npm run build
-      - name: Prepare dist
-        run: |
-          mkdir -p dist
-          cp -r assets dist/
-          cp -r dist ./pack
+      # No manual dist prep needed; handled by build/package scripts
       - name: Compute release name and tag
         run: |
-          # Prefer manual input tag if provided via workflow_dispatch
+          # Compose tag and asset name with plugin name prefix
+          PLUGIN_NAME="${PLUGIN_NAME:-decky-protondb-collections}"
           if [ -n "${INPUT_RELEASE_TAG}" ]; then
-            NAME="${INPUT_RELEASE_TAG}"
-            TAG="${INPUT_RELEASE_TAG}"
+            NAME="$PLUGIN_NAME-${INPUT_RELEASE_TAG}"
+            TAG="$PLUGIN_NAME-${INPUT_RELEASE_TAG}"
           elif [ -n "${GITHUB_REF_NAME}" ]; then
-            NAME="${GITHUB_REF_NAME}"
-            TAG="${GITHUB_REF_NAME}"
+            NAME="$PLUGIN_NAME-${GITHUB_REF_NAME}"
+            TAG="$PLUGIN_NAME-${GITHUB_REF_NAME}"
           else
-            NAME="release-${GITHUB_RUN_NUMBER}"
-            TAG="v${GITHUB_RUN_NUMBER}"
+            NAME="$PLUGIN_NAME-release-${GITHUB_RUN_NUMBER}"
+            TAG="$PLUGIN_NAME-v${GITHUB_RUN_NUMBER}"
           fi
           echo "RELEASE_NAME=$NAME" >> $GITHUB_ENV
           echo "RELEASE_TAG=$TAG" >> $GITHUB_ENV
           # propagate prerelease input
           echo "PRERELEASE=${INPUT_PRERELEASE:-true}" >> $GITHUB_ENV
         env:
+          PLUGIN_NAME: ${{ env.PLUGIN_NAME }}
           INPUT_RELEASE_TAG: ${{ github.event.inputs.release_tag }}
           INPUT_PRERELEASE: ${{ github.event.inputs.prerelease }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
 
-      - name: Create zip
+      - name: Create zip (npm run package)
+        run: npm run package
+      - name: Rename zip to match release name
         run: |
-          sudo apt-get update && sudo apt-get install -y zip
-          cd dist
-          zip -r ../${{ env.RELEASE_NAME }}.zip .
-          cd -
+          PLUGIN_NAME="${PLUGIN_NAME:-decky-protondb-collections}"
+          ZIP_NAME="$PLUGIN_NAME.zip"
+          TARGET_NAME="${RELEASE_NAME}.zip"
+          if [ "$ZIP_NAME" != "$TARGET_NAME" ]; then
+            mv "$ZIP_NAME" "$TARGET_NAME"
+          fi
         env:
+          PLUGIN_NAME: ${{ env.PLUGIN_NAME }}
           RELEASE_NAME: ${{ env.RELEASE_NAME }}
+
       - name: Create or update GitHub Release
         id: create_release
         uses: actions/github-script@v6
