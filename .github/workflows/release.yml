@@ -2,6 +2,14 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Tag name (e.g. v0.1.0-alpha.1). If empty, a tag will be generated.'
+        required: false
+      prerelease:
+        description: 'Mark release as prerelease? true/false'
+        required: false
+        default: 'true'
   push:
     tags:
       - 'v*'
@@ -22,7 +30,6 @@ jobs:
       - name: Prepare dist
         run: |
           mkdir -p dist
-          cp plugin.json dist/
           cp -r assets dist/
           cp -r dist ./pack
       - name: Create zip
@@ -35,7 +42,11 @@ jobs:
           RELEASE_NAME: ${{ env.RELEASE_NAME }}
       - name: Compute release name and tag
         run: |
-          if [ -n "${GITHUB_REF_NAME}" ]; then
+          # Prefer manual input tag if provided via workflow_dispatch
+          if [ -n "${INPUT_RELEASE_TAG}" ]; then
+            NAME="${INPUT_RELEASE_TAG}"
+            TAG="${INPUT_RELEASE_TAG}"
+          elif [ -n "${GITHUB_REF_NAME}" ]; then
             NAME="${GITHUB_REF_NAME}"
             TAG="${GITHUB_REF_NAME}"
           else
@@ -44,13 +55,61 @@ jobs:
           fi
           echo "RELEASE_NAME=$NAME" >> $GITHUB_ENV
           echo "RELEASE_TAG=$TAG" >> $GITHUB_ENV
+          # propagate prerelease input
+          echo "PRERELEASE=${INPUT_PRERELEASE:-true}" >> $GITHUB_ENV
         env:
+          INPUT_RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+          INPUT_PRERELEASE: ${{ github.event.inputs.prerelease }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
-      - name: Create GitHub Release
+      - name: Create or update GitHub Release
         id: create_release
-        uses: ncipollo/release-action@v1
+        uses: actions/github-script@v6
         with:
-          tag: ${{ env.RELEASE_TAG }}
-          name: ${{ env.RELEASE_NAME }}
-          artifacts: "./${{ env.RELEASE_NAME }}.zip"
+          script: |
+            const tag = process.env.RELEASE_TAG;
+            const prerelease = (process.env.PRERELEASE === 'true');
+            try {
+              const { data: existing } = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag,
+              });
+              const { data } = await github.rest.repos.updateRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: existing.id,
+                tag_name: tag,
+                name: tag,
+                body: 'Automated release (updated)',
+                draft: false,
+                prerelease,
+              });
+              return data.id;
+            } catch (err) {
+              if (err.status === 404) {
+                const { data } = await github.rest.repos.createRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag_name: tag,
+                  name: tag,
+                  body: 'Automated release (created)',
+                  draft: false,
+                  prerelease,
+                });
+                return data.id;
+              }
+              throw err;
+            }
+        env:
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+          PRERELEASE: ${{ env.PRERELEASE }}
+
+      - name: Upload release asset
+        uses: actions/upload-release-asset@v1
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          release_id: ${{ steps.create_release.outputs.result }}
+          asset_path: ./${{ env.RELEASE_NAME }}.zip
+          asset_name: ${{ env.RELEASE_NAME }}.zip
+          asset_content_type: application/zip
