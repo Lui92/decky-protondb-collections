@@ -25,6 +25,7 @@ async function build() {
     bundle: true,
     platform: 'browser',
     sourcemap: true,
+    format: 'esm',
     outfile: path.join(outdir, 'index.js'),
     external: ['@decky/ui', 'react', 'react-dom'],
   });

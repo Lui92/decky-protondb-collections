@@ -1,7 +1,11 @@
 /**
  * Structured logging utility for ProtonSets plugin.
  * Provides debug, info, warn, and error levels with context.
+ * Logs are written to both console and file (on Steam Deck: /homebrew/logs/decky-protondb-collections/)
  */
+
+import fs from "fs";
+import path from "path";
 
 export enum LogLevel {
   DEBUG = "DEBUG",
@@ -20,9 +24,93 @@ interface LogContext {
 
 class Logger {
   private minLevel: LogLevel = LogLevel.DEBUG;
+  private logDir: string = "";
+  private logFile: string = "";
+  private maxLogFileSize: number = 5 * 1024 * 1024; // 5MB
+  private currentLogSize: number = 0;
+
+  constructor() {
+    this.initializeLogDirectory();
+  }
+
+  private initializeLogDirectory() {
+    try {
+      // On Steam Deck, logs go to /homebrew/logs/decky-protondb-collections/
+      // Otherwise use DECKY_PLUGIN_DATA_PATH or current directory
+      const homebrewLogsPath = "/homebrew/logs/decky-protondb-collections";
+      const dataPath = process.env.DECKY_PLUGIN_DATA_PATH || ".";
+      
+      // Try homebrew path first (Steam Deck)
+      if (process.env.DECKY_PLUGIN_LOG_DIR) {
+        this.logDir = process.env.DECKY_PLUGIN_LOG_DIR;
+      } else if (fs.existsSync("/homebrew/logs")) {
+        this.logDir = homebrewLogsPath;
+      } else {
+        this.logDir = dataPath;
+      }
+
+      // Create log directory if it doesn't exist
+      if (!fs.existsSync(this.logDir)) {
+        fs.mkdirSync(this.logDir, { recursive: true });
+      }
+
+      this.logFile = path.join(this.logDir, "plugin.log");
+
+      // Check current log file size
+      if (fs.existsSync(this.logFile)) {
+        const stats = fs.statSync(this.logFile);
+        this.currentLogSize = stats.size;
+      }
+    } catch (err) {
+      // If directory creation fails, just use console logging
+      console.warn("Failed to initialize log directory:", err);
+      this.logDir = "";
+    }
+  }
+
+  private rotateLogIfNeeded() {
+    try {
+      if (!this.logDir || this.currentLogSize < this.maxLogFileSize) return;
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const archivePath = path.join(this.logDir, `plugin-${timestamp}.log`);
+      
+      if (fs.existsSync(this.logFile)) {
+        fs.renameSync(this.logFile, archivePath);
+      }
+      
+      this.currentLogSize = 0;
+    } catch (err) {
+      // Silently fail for log rotation
+    }
+  }
+
+  private writeToFile(message: string) {
+    try {
+      if (!this.logDir || !this.logFile) return;
+
+      fs.appendFileSync(this.logFile, message + "\n");
+      this.currentLogSize += message.length + 1;
+
+      // Check if we need to rotate
+      if (this.currentLogSize >= this.maxLogFileSize) {
+        this.rotateLogIfNeeded();
+      }
+    } catch (err) {
+      // Silently fail for file writes to not break plugin
+    }
+  }
 
   setMinLevel(level: LogLevel) {
     this.minLevel = level;
+  }
+
+  getLogDirectory(): string {
+    return this.logDir;
+  }
+
+  getLogFile(): string {
+    return this.logFile;
   }
 
   private formatContext(context?: LogContext): string {
@@ -56,6 +144,7 @@ class Logger {
     const contextStr = this.formatContext(context);
     const baseMsg = `[${timestamp}] ${level}${contextStr}: ${message}`;
 
+    // Write to console
     if (error) {
       switch (level) {
         case LogLevel.DEBUG:
@@ -87,6 +176,14 @@ class Logger {
           break;
       }
     }
+
+    // Write to file
+    let fileMsg = baseMsg;
+    if (error) {
+      const errorStr = error instanceof Error ? error.stack || error.message : String(error);
+      fileMsg += `\n  Error: ${errorStr}`;
+    }
+    this.writeToFile(fileMsg);
   }
 
   debug(message: string, context?: LogContext) {

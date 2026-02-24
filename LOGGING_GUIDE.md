@@ -1,5 +1,15 @@
 # ProtonSets Plugin - Logging Guide
 
+## Quick Access to Logs
+
+**On Steam Deck:**
+```bash
+ssh deck@steamdeck.local
+tail -f /homebrew/logs/decky-protondb-collections/plugin.log
+```
+
+Logs are stored in `/homebrew/logs/decky-protondb-collections/` and automatically rotated when they reach 5MB.
+
 ## Overview
 
 Comprehensive logging has been added to the ProtonSets plugin to provide visibility into plugin execution, data retrieval, and error handling. All logs include timestamps and contextual information.
@@ -163,6 +173,46 @@ Example logs:
 4. **TabMaster Sync Problems**: Look for `component=TabMaster` and `action=sync`
 5. **Performance Issues**: Check duration values in INFO logs
 
+### Accessing Logs from Steam Deck
+
+**View recent logs (last 100 lines):**
+```bash
+ssh deck@steamdeck.local
+tail -100 /homebrew/logs/decky-protondb-collections/plugin.log
+```
+
+**Watch logs in real-time:**
+```bash
+ssh deck@steamdeck.local
+tail -f /homebrew/logs/decky-protondb-collections/plugin.log
+```
+
+**Search for specific errors:**
+```bash
+ssh deck@steamdeck.local
+grep -i "error\|failed" /homebrew/logs/decky-protondb-collections/plugin.log
+```
+
+**Search for specific component:**
+```bash
+ssh deck@steamdeck.local
+grep "ProtonDB" /homebrew/logs/decky-protondb-collections/plugin.log
+grep "Collections" /homebrew/logs/decky-protondb-collections/plugin.log
+grep "TabMaster" /homebrew/logs/decky-protondb-collections/plugin.log
+```
+
+**Count specific log levels:**
+```bash
+ssh deck@steamdeck.local
+grep -c "ERROR" /homebrew/logs/decky-protondb-collections/plugin.log
+grep -c "WARN" /homebrew/logs/decky-protondb-collections/plugin.log
+```
+
+**Download all logs to your computer:**
+```bash
+scp -r deck@steamdeck.local:/homebrew/logs/decky-protondb-collections/ ./steampeck-logs
+```
+
 ### Common Log Patterns
 
 **Successful collection generation:**
@@ -191,9 +241,50 @@ Example logs:
 
 ## Log Output Location
 
-Logs are output to:
-- **Browser Console**: When running in SteamDeck UI
-- **Backend Logs**: When running as a Decky backend service
+### Steam Deck (Primary Location)
+
+On Steam Deck, logs are written to:
+```
+/homebrew/logs/decky-protondb-collections/plugin.log
+```
+
+This is the standard location where all Decky plugins store their logs. You can access these files via:
+
+**SSH to Steam Deck:**
+```bash
+ssh deck@steamdeck.local
+cd /homebrew/logs/decky-protondb-collections/
+cat plugin.log
+# or tail for real-time logs
+tail -f plugin.log
+```
+
+**Using SCP to download logs:**
+```bash
+scp deck@steamdeck.local:/homebrew/logs/decky-protondb-collections/plugin.log ./
+```
+
+### Log Rotation
+
+Logs are automatically rotated when they exceed 5MB. Rotated logs are archived as:
+```
+/homebrew/logs/decky-protondb-collections/plugin-YYYY-MM-DDTHH-MM-SS.log
+```
+
+This ensures that the main `plugin.log` file doesn't grow too large and old logs are preserved for troubleshooting.
+
+### Development Environment
+
+When running in development (not on Steam Deck):
+- Logs go to `DECKY_PLUGIN_DATA_PATH` if set
+- Otherwise defaults to the plugin's working directory
+- File output includes both console logs and file-based logs
+
+### Console Output
+
+In addition to file logging, all logs are output to:
+- **Browser Console**: When running in SteamDeck UI (F12 to open developer tools)
+- **Backend Logs**: Backend service console output
 - **Jest Output**: During test execution
 
 ## Performance Insights from Logs
