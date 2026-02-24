@@ -32,6 +32,7 @@ function getFetchLib() {
 
 import EventEmitter from "eventemitter3";
 import { Cache, CacheEntry, Settings, Buckets } from "./types";
+import { logger } from "./logger";
 
 const DATA_PATH = process.env.DECKY_PLUGIN_DATA_PATH || ".";
 const CACHE_FILE = path.join(DATA_PATH, "proton_cache.json");
@@ -57,8 +58,10 @@ export default class Plugin extends EventEmitter {
 
   constructor() {
     super();
+    logger.logStartAction("Plugin", "initialization");
     this.loadCache();
     this.loadSettings();
+    logger.info("Plugin constructor completed", { component: "Plugin", action: "initialization" });
   }
 
   // Simple request scheduler to avoid hammering ProtonDB for very large libraries.
@@ -81,28 +84,37 @@ export default class Plugin extends EventEmitter {
 
     this.currentRequests++;
     this.lastRequestAt = Date.now();
+    const startTime = Date.now();
 
     let lastErr: any = null;
     try {
       for (let i = 0; i <= retries; i++) {
         try {
+          logger.logHttpRequest(url, "GET", i + 1);
           const fetch = getFetchLib();
           const res = await fetch(url, { timeout: 10000 } as any);
           if (!res || !res.ok) {
             const status = res && res.status ? res.status : 'NO_RESPONSE';
             const statusText = res && res.statusText ? res.statusText : '';
+            logger.logHttpError(url, `HTTP ${status} ${statusText}`);
             throw new Error(`HTTP ${status} ${statusText} for ${url}`);
           }
+          const duration = Date.now() - startTime;
+          logger.logHttpResponse(url, res.status, res.statusText, duration);
           return await res.json();
         } catch (err) {
           lastErr = err;
-          if (i < retries) await new Promise((r) => setTimeout(r, delay * Math.pow(2, i)));
+          if (i < retries) {
+            logger.debug(`HTTP request attempt ${i + 1} failed, retrying...`, { component: "HTTP", url });
+            await new Promise((r) => setTimeout(r, delay * Math.pow(2, i)));
+          }
           // On repeated failures, slightly reduce concurrency to be kinder to API
           try {
             this.maxConcurrentRequests = Math.max(1, this.maxConcurrentRequests - 1);
           } catch {}
         }
       }
+      logger.logHttpError(url, lastErr);
       throw lastErr;
     } finally {
       this.currentRequests = Math.max(0, this.currentRequests - 1);
@@ -113,12 +125,17 @@ export default class Plugin extends EventEmitter {
   loadCache() {
     try {
       if (fs.existsSync(CACHE_FILE)) {
+        logger.debug(`Loading cache from ${CACHE_FILE}`, { component: "Cache", action: "load" });
         const raw = fs.readFileSync(CACHE_FILE, "utf8");
         this.cache = JSON.parse(raw) as Cache;
+        logger.logCacheOperation("load", true, { entries: Object.keys(this.cache).length });
+      } else {
+        logger.debug(`Cache file not found at ${CACHE_FILE}, starting fresh`, { component: "Cache" });
       }
     } catch (err) {
       // On parse failure, start with empty cache but keep running
-      console.error("Failed to load cache:", err);
+      logger.logCacheOperation("load", false);
+      logger.error("Failed to load cache", err, { component: "Cache" });
       this.cache = {};
     }
   }
@@ -127,35 +144,45 @@ export default class Plugin extends EventEmitter {
   saveCache() {
     try {
       fs.writeFileSync(CACHE_FILE, JSON.stringify(this.cache, null, 2));
+      logger.logCacheOperation("save", true, { entries: Object.keys(this.cache).length });
     } catch (err) {
-      console.error("Failed to save cache:", err);
+      logger.logCacheOperation("save", false);
+      logger.error("Failed to save cache", err, { component: "Cache" });
     }
   }
 
   loadSettings() {
     try {
       if (fs.existsSync(SETTINGS_FILE)) {
+        logger.debug(`Loading settings from ${SETTINGS_FILE}`, { component: "Settings", action: "load" });
         const raw = fs.readFileSync(SETTINGS_FILE, "utf8");
         this.settings = JSON.parse(raw) as Settings;
+        logger.logSettingsOperation("load", true, { badges: this.settings.enabledBadges?.length || 0 });
         // Apply advanced settings if present
         if (typeof this.settings.concurrency === "number") this.maxConcurrentRequests = Math.max(1, Math.floor(this.settings.concurrency));
         if (typeof this.settings.minIntervalMs === "number") this.minIntervalMs = Math.max(0, Math.floor(this.settings.minIntervalMs));
         if (typeof this.settings.maxCacheEntries === "number") this.maxCacheEntries = Math.max(0, Math.floor(this.settings.maxCacheEntries));
+      } else {
+        logger.debug(`Settings file not found at ${SETTINGS_FILE}, using defaults`, { component: "Settings" });
       }
     } catch (err) {
-      console.error("Failed to load settings:", err);
+      logger.logSettingsOperation("load", false);
+      logger.error("Failed to load settings", err, { component: "Settings" });
     }
   }
 
   saveSettings() {
     try {
       fs.writeFileSync(SETTINGS_FILE, JSON.stringify(this.settings, null, 2));
+      logger.logSettingsOperation("save", true, { badges: this.settings.enabledBadges?.length || 0 });
     } catch (err) {
-      console.error("Failed to save settings:", err);
+      logger.logSettingsOperation("save", false);
+      logger.error("Failed to save settings", err, { component: "Settings" });
     }
   }
 
   async updateSettings(newSettings: Settings) {
+    logger.logStartAction("Settings", "update");
     // minimal validation
     if (!Array.isArray(newSettings.enabledBadges)) newSettings.enabledBadges = DEFAULT_BADGES.slice();
     this.settings = newSettings;
@@ -164,6 +191,7 @@ export default class Plugin extends EventEmitter {
     if (typeof this.settings.minIntervalMs === "number") this.minIntervalMs = Math.max(0, Math.floor(this.settings.minIntervalMs));
     if (typeof this.settings.maxCacheEntries === "number") this.maxCacheEntries = Math.max(0, Math.floor(this.settings.maxCacheEntries));
     this.saveSettings();
+    logger.info("Settings updated", { component: "Settings", badges: this.settings.enabledBadges.length });
     this.emit("settingsUpdated", this.settings);
   }
 
@@ -176,19 +204,24 @@ export default class Plugin extends EventEmitter {
     // return cached if present and not stale (e.g., 30 days)
     const entry = this.cache[id];
     const THIRTY_DAYS = 1000 * 60 * 60 * 24 * 30;
-    if (entry && Date.now() - entry.updated < THIRTY_DAYS) return entry.tier;
+    if (entry && Date.now() - entry.updated < THIRTY_DAYS) {
+      logger.logProtonDBFetch(appid, true, entry.tier);
+      return entry.tier;
+    }
 
     try {
+      logger.logProtonDBFetch(appid, false);
       const url = `https://www.protondb.com/api/v1/reports/summaries/${id}.json`;
       const json = await this.httpGetJson(url, 2, 400);
       const tier = (json?.tier || "unknown").toString().toLowerCase();
       const newEntry: CacheEntry = { tier, updated: Date.now() };
       this.cache[id] = newEntry;
+      logger.debug(`ProtonDB badge retrieved: ${tier}`, { component: "ProtonDB", appId: appid, tier });
       this.evictCacheIfNeeded();
       this.saveCache();
       return tier;
     } catch (err) {
-      console.warn(`Failed to fetch ProtonDB for ${id}:`, err);
+      logger.logProtonDBError(appid, err as Error);
       return "unknown";
     }
   }
@@ -205,8 +238,9 @@ export default class Plugin extends EventEmitter {
       for (let i = 0; i < toRemove; i++) {
         delete this.cache[keys[i]];
       }
+      logger.logCacheOperation("evict", true, { removed: toRemove, remaining: this.maxCacheEntries });
     } catch (err) {
-      console.error("Cache eviction failed:", err);
+      logger.error("Cache eviction failed", err, { component: "Cache", action: "evict" });
     }
   }
 
@@ -215,13 +249,25 @@ export default class Plugin extends EventEmitter {
    * progressCallback(current, total) optional progress reporter.
    */
   async generateCollections(progressCallback?: (current: number, total: number) => void, concurrency = 6): Promise<Buckets | null> {
-    if (this.refreshing) return null;
-    if (!this.steam || !this.steam.getOwnedAppIds) throw new Error("Steam integration not injected");
+    if (this.refreshing) {
+      logger.warn("Collection generation already in progress, skipping", undefined, { component: "Collections" });
+      return null;
+    }
+    if (!this.steam || !this.steam.getOwnedAppIds) {
+      logger.error("Steam integration not injected", new Error("Steam integration not injected"), { component: "Collections" });
+      throw new Error("Steam integration not injected");
+    }
     this.refreshing = true;
 
     try {
+      const startTime = Date.now();
+      logger.logStartAction("Collections", "generation", { concurrency });
+      
       const apps: number[] = await this.steam.getOwnedAppIds();
+      logger.info(`Fetched owned apps from Steam: ${apps.length} apps`, { component: "Steam", action: "getOwnedAppIds", appCount: apps.length });
+      
       const installed: number[] = (this.steam.getInstalledAppIds && await this.steam.getInstalledAppIds()) || [];
+      logger.info(`Fetched installed apps from Steam: ${installed.length} apps`, { component: "Steam", action: "getInstalledAppIds", appCount: installed.length });
 
       const buckets: Buckets = {};
       for (const b of this.settings.enabledBadges) buckets[b] = [];
@@ -265,20 +311,27 @@ export default class Plugin extends EventEmitter {
       await Promise.all(workers);
 
       // Persist collections to Steam
+      logger.info("Creating Steam collections...", { component: "Steam", action: "setCollection" });
       for (const tier in buckets) {
         try {
           const name = `ProtonDB - ${tier.charAt(0).toUpperCase() + tier.slice(1)}`;
           if (this.steam.setCollection) {
             await this.steam.setCollection(name, buckets[tier]);
+            logger.logCollectionCreated(name, buckets[tier].length);
           }
         } catch (err) {
-          console.warn("Failed to set collection for tier", tier, err);
+          logger.logCollectionFailed(`ProtonDB - ${tier}`, err as Error);
         }
       }
 
       // Optional Tab Master sync
-      if (this.settings.autoSync) await this.syncTabMaster(buckets);
+      if (this.settings.autoSync) {
+        logger.debug("Auto-sync enabled, syncing with TabMaster", { component: "Collections", autoSync: true });
+        await this.syncTabMaster(buckets);
+      }
 
+      const duration = Date.now() - startTime;
+      logger.logEndAction("Collections", "generation", duration, { tiers: Object.keys(buckets).length });
       this.emit("generated", buckets);
       return buckets;
     } finally {
@@ -288,30 +341,52 @@ export default class Plugin extends EventEmitter {
 
   async syncTabMaster(buckets: Buckets) {
     try {
-      if (!this.steam || !this.steam.isPluginInstalled) return;
-      if (!this.steam.isPluginInstalled("TabMaster")) return;
+      if (!this.steam || !this.steam.isPluginInstalled) {
+        logger.debug("Steam integration not available, skipping TabMaster sync", { component: "TabMaster" });
+        return;
+      }
+      
+      const isTabMasterInstalled = this.steam.isPluginInstalled("TabMaster");
+      if (!isTabMasterInstalled) {
+        logger.info("TabMaster plugin not installed, skipping sync", { component: "TabMaster", plugin: "TabMaster" });
+        return;
+      }
+      
+      logger.logStartAction("TabMaster", "sync");
 
       for (const tier in buckets) {
         const tabName = `ProtonDB ${tier}`;
         try {
+          logger.debug(`Creating TabMaster tab: ${tabName}`, { component: "TabMaster", tier, apps: buckets[tier].length });
           await this.steam.callPlugin("TabMaster", "createTab", {
             name: tabName,
             apps: buckets[tier],
           });
+          logger.logTabMasterSync(tabName, buckets[tier].length);
         } catch (err) {
-          console.warn("TabMaster createTab failed for", tabName, err);
+          logger.logTabMasterError(tabName, err as Error);
         }
       }
+      
+      logger.info("TabMaster sync completed", { component: "TabMaster", action: "sync", tiers: Object.keys(buckets).length });
     } catch (err) {
-      console.error("Tab Master sync failed:", err);
+      logger.error("TabMaster sync failed", err, { component: "TabMaster" });
     }
   }
 
   // Watcher wiring - host should call when library changes
   watchLibraryChanges() {
-    if (!this.steam || !this.steam.onLibraryChanged) return;
+    if (!this.steam || !this.steam.onLibraryChanged) {
+      logger.warn("Steam integration not available, cannot watch library changes", undefined, { component: "Steam", action: "onLibraryChanged" });
+      return;
+    }
+    logger.info("Registering library change watcher", { component: "Steam", action: "onLibraryChanged" });
     this.steam.onLibraryChanged(async () => {
-      if (this.settings.autoSync) await this.generateCollections();
+      logger.info("Library changed detected", { component: "Steam", event: "onLibraryChanged" });
+      if (this.settings.autoSync) {
+        logger.info("Auto-sync enabled, regenerating collections", { component: "Collections", trigger: "libraryChanged" });
+        await this.generateCollections();
+      }
     });
   }
 }
